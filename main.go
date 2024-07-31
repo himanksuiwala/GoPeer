@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"os"
 )
@@ -51,7 +52,7 @@ func runServer() {
 
 	defer ln.Close()
 
-	fmt.Printf("Server started on Port %s\n", PORT)
+	fmt.Printf("[Server@%s]: Server started...\n", PORT[1:])
 
 	for {
 		conn, err := ln.Accept()
@@ -60,21 +61,32 @@ func runServer() {
 			continue
 		}
 
-		fmt.Printf("[Server@%s]: %s\n", PORT, conn.RemoteAddr().String())
+		fmt.Printf("[Server@%s]: New peer connected %s\n", PORT[1:], conn.RemoteAddr().String())
 
 		go handleConnection(conn)
 	}
 }
 
 func handleConnection(conn net.Conn) {
-	// defer conn.Close()
+	defer conn.Close()
 
 	buf := make([]byte, 1024)
-	n, err := conn.Read(buf)
-	if err != nil {
-		fmt.Printf("%s\n", err)
-		return
-	}
+	// reader := bufio.NewReader(conn)
 
-	fmt.Printf("[Server@%s]: %s\n", PORT, string(buf[:n]))
+	for {
+		// message, err := reader.ReadString('\n')
+		n, err := conn.Read(buf)
+		if err == io.EOF {
+			fmt.Printf("[Server@%s]: Peer[%s] disconnected\n", PORT[1:], conn.RemoteAddr().String())
+			break
+		}
+		if err != nil {
+			fmt.Printf("%s\n", err)
+			break
+		}
+
+		msg := string(buf[:n])
+
+		fmt.Printf("[Peer@%s]: %s\n", conn.RemoteAddr().String(), msg) //Printing of newline due to enter key
+	}
 }
