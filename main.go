@@ -45,6 +45,9 @@ func readFile() {
 }
 
 func runServer() {
+	connectionPool := new(map[string]net.Conn)
+	*connectionPool = make(map[string]net.Conn)
+
 	ln, err := net.Listen("tcp", PORT)
 	if err != nil {
 		fmt.Printf("%s\n", err)
@@ -55,19 +58,21 @@ func runServer() {
 	fmt.Printf("[Server@%s]: Server started...\n", PORT[1:])
 
 	for {
-		conn, err := ln.Accept()
+		incomingConnection, err := ln.Accept()
+		connectionAddress := incomingConnection.RemoteAddr().String()
+		(*connectionPool)[connectionAddress] = incomingConnection
 		if err != nil {
 			fmt.Printf("%s\n", err)
 			continue
 		}
 
-		fmt.Printf("[Server@%s]: New peer connected %s\n", PORT[1:], conn.RemoteAddr().String())
+		fmt.Printf("[Server@%s]: New peer connected %s\n", PORT[1:], connectionAddress)
 
-		go handleConnection(conn)
+		go handleConnection(incomingConnection, connectionPool)
 	}
 }
 
-func handleConnection(conn net.Conn) {
+func handleConnection(conn net.Conn, connectionPool *map[string]net.Conn) {
 	defer conn.Close()
 
 	buf := make([]byte, 1024)
@@ -76,12 +81,15 @@ func handleConnection(conn net.Conn) {
 	for {
 		// message, err := reader.ReadString('\n')
 		n, err := conn.Read(buf)
+		activeConnection := conn.RemoteAddr().String()
 		if err == io.EOF {
 			fmt.Printf("[Server@%s]: Peer[%s] disconnected\n", PORT[1:], conn.RemoteAddr().String())
+			delete(*connectionPool, activeConnection)
 			break
 		}
 		if err != nil {
 			fmt.Printf("%s\n", err)
+			delete(*connectionPool, activeConnection)
 			break
 		}
 
