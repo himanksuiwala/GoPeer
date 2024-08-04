@@ -1,52 +1,90 @@
 package main
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"strings"
 )
 
-const PORT string = ":3000"
+const (
+	PORT         string = ":3000"
+	ROOT_STORAGE        = "_STORAGE_"
+	PERMISSION          = 0750
+)
 
 func main() {
-	// createFolder()
-	// createFile()
-	// readFile()
-	// deleteFile()
+	// fileKey := "KEYFORFILE"
+	// path := getContentAddress(fileKey)
 
-	runServer()
+	// if err := createFolder(path); err != nil {
+	// 	fmt.Printf("%s\n", err)
+	// }
+	// if err := createFile(path, "firstFileUsingGo.txt"); err != nil {
+	// 	fmt.Printf("%s\n", err)
+	// }
+	// if err := readFile(path, "firstFileUsingGo.txt"); err != nil {
+	// 	fmt.Printf("%s\n", err)
+	// }
+	// if err := deleteFile(path, "firstFileUsingGo.txt"); err != nil {
+	// 	fmt.Printf("%s\n", err)
+	// }
+	// if err := removeFolder(ROOT_STORAGE); err != nil {
+	// 	fmt.Printf("%s\n", err)
+	// }
+	// if err := runServer(); err != nil {
+	// 	fmt.Printf("%s\n", err)
+	// }
 }
 
-func createFolder() {
-	if err := os.Mkdir("_STORAGE_", 0750); err != nil {
-		fmt.Printf("%s\n", err)
+func createFolder(path string) error {
+	if err := os.MkdirAll(getFilePath(ROOT_STORAGE, path), PERMISSION); err != nil {
+		return err
 	}
+	fmt.Printf("%s\n", "Folder created")
+	return nil
 }
 
-func createFile() {
-	if err := os.WriteFile("_STORAGE_/file1.txt", []byte("This is the first file system implemented from scratch"), 0750); err != nil {
-		fmt.Printf("%s\n", err)
+func removeFolder(path string) error {
+	if err := os.RemoveAll(path); err != nil {
+		return err
 	}
+	fmt.Printf("%s\n", "Folder removed")
+	return nil
 }
 
-func deleteFile() {
-	if err := os.Remove("_STORAGE_/file1.txt"); err != nil {
-		fmt.Printf("%s\n", err)
+func createFile(path string, fileName string) error {
+	if err := os.WriteFile(getFilePath(ROOT_STORAGE, path, fileName), []byte("This is the first file system implemented from scratch"), PERMISSION); err != nil {
+		return err
 	}
+	fmt.Printf("%s\n", "File created")
+	return nil
 }
 
-func readFile() {
-	fileContents, err := os.ReadFile("_STORAGE_/file1.txt")
+func deleteFile(path string, fileName string) error {
+	if err := os.Remove(getFilePath(ROOT_STORAGE, path, fileName)); err != nil {
+		return err
+	}
+	fmt.Printf("%s\n", "File removed")
+	return nil
+}
+
+func readFile(path string, fileName string) error {
+	fileContents, err := os.ReadFile(getFilePath(ROOT_STORAGE, path, fileName))
 	if err != nil {
 		fmt.Printf("%s\n", err)
 	}
-	fmt.Println("[File]:", string(fileContents))
+	fmt.Printf("[File]:%s\n", string(fileContents))
+	return nil
 }
 
-func runServer() {
+func runServer() error {
 	connectionPool := new(map[string]net.Conn)
 	*connectionPool = make(map[string]net.Conn)
+	connectionPoolStatus := make(chan string)
 
 	ln, err := net.Listen("tcp", PORT)
 	if err != nil {
@@ -68,23 +106,34 @@ func runServer() {
 
 		fmt.Printf("[Server@%s]: New peer connected %s\n", PORT[1:], connectionAddress)
 
-		go handleConnection(incomingConnection, connectionPool)
+		go handleConnection(incomingConnection, connectionPool, connectionPoolStatus)
+		go func() {
+			for err := range connectionPoolStatus {
+				if err == "ZERO_PEERS" {
+					fmt.Printf("[Server@%s]: Terminating the server...\n", PORT[1:])
+					panic("0 peers found, server closed")
+				}
+			}
+		}()
 	}
 }
 
-func handleConnection(conn net.Conn, connectionPool *map[string]net.Conn) {
+func handleConnection(conn net.Conn, connectionPool *map[string]net.Conn, connectionPoolStatus chan<- string) {
 	defer conn.Close()
 
 	buf := make([]byte, 1024)
-	// reader := bufio.NewReader(conn)
 
 	for {
-		// message, err := reader.ReadString('\n')
 		n, err := conn.Read(buf)
 		activeConnection := conn.RemoteAddr().String()
 		if err == io.EOF {
 			fmt.Printf("[Server@%s]: Peer[%s] disconnected\n", PORT[1:], conn.RemoteAddr().String())
+
 			delete(*connectionPool, activeConnection)
+
+			if len(*connectionPool) == 0 {
+				connectionPoolStatus <- "ZERO_PEERS"
+			}
 			break
 		}
 		if err != nil {
@@ -95,6 +144,31 @@ func handleConnection(conn net.Conn, connectionPool *map[string]net.Conn) {
 
 		msg := string(buf[:n])
 
-		fmt.Printf("[Peer@%s]: %s\n", conn.RemoteAddr().String(), msg) //Printing of newline due to enter key
+		fmt.Printf("[Peer@%s]: %s\n", conn.RemoteAddr().String(), msg)
 	}
+}
+
+func getContentAddress(key string) string {
+	hash := sha1.Sum([]byte(key))
+	hashInString := hex.EncodeToString(hash[:])
+	hashLen := len(hashInString)
+	blockSize := 5
+	slices := hashLen / blockSize
+	paths := make([]string, slices)
+	for i := 0; i < slices; i++ {
+		from, to := i*blockSize, (i*blockSize)+blockSize
+		paths[i] = hashInString[from:to]
+	}
+
+	return strings.Join(paths, "/")
+}
+
+func getFilePath(parentDir string, key ...string) string {
+	result := ""
+	if len(key) == 1 {
+		result = fmt.Sprintf("%s/%s", parentDir, key[0])
+	} else if len(key) == 2 {
+		result = fmt.Sprintf("%s/%s/%s ", parentDir, key[0], key[1])
+	}
+	return result
 }
