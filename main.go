@@ -19,11 +19,11 @@ const (
 func main() {
 	// fileKey := "KEYFORFILE"
 	// path := getContentAddress(fileKey)
-
+	// fileName := getSHAHash(fileKey)
 	// if err := createFolder(path); err != nil {
 	// 	fmt.Printf("%s\n", err)
 	// }
-	// if err := createFile(path, "firstFileUsingGo.txt"); err != nil {
+	// if err := createFile(path, fileName); err != nil {
 	// 	fmt.Printf("%s\n", err)
 	// }
 	// if err := readFile(path, "firstFileUsingGo.txt"); err != nil {
@@ -37,6 +37,9 @@ func main() {
 	// }
 	// if err := runServer(); err != nil {
 	// 	fmt.Printf("%s\n", err)
+	// }
+	// if err := findFile("/54553/"+path, fileName); err != nil {
+	// 	fmt.Println(err)
 	// }
 }
 
@@ -75,9 +78,23 @@ func deleteFile(path string, fileName string) error {
 func readFile(path string, fileName string) error {
 	fileContents, err := os.ReadFile(getFilePath(ROOT_STORAGE, path, fileName))
 	if err != nil {
-		fmt.Printf("%s\n", err)
+		return err
 	}
 	fmt.Printf("[File]:%s\n", string(fileContents))
+	return nil
+}
+
+func findFile(path string, fileName string) error {
+	_, err := os.Stat(getFilePath(ROOT_STORAGE, path, fileName))
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Println("File does not exist")
+		} else {
+			fmt.Println("Error:", err)
+		}
+		return err
+	}
+	fmt.Println("File exists")
 	return nil
 }
 
@@ -105,6 +122,16 @@ func runServer() error {
 		}
 
 		fmt.Printf("[Server@%s]: New peer connected %s\n", PORT[1:], connectionAddress)
+
+		fileKey := "KEYFORFILE"
+		path := connectionAddress[6:] + "/" + getContentAddress(fileKey)
+		fileName := getSHAHash(fileKey)
+		if err := createFolder(path); err != nil {
+			fmt.Printf("%s\n", err)
+		}
+		if err := createFile(path, fileName); err != nil {
+			fmt.Printf("%s\n", err)
+		}
 
 		go handleConnection(incomingConnection, connectionPool, connectionPoolStatus)
 		go func() {
@@ -149,8 +176,7 @@ func handleConnection(conn net.Conn, connectionPool *map[string]net.Conn, connec
 }
 
 func getContentAddress(key string) string {
-	hash := sha1.Sum([]byte(key))
-	hashInString := hex.EncodeToString(hash[:])
+	hashInString := getSHAHash(key)
 	hashLen := len(hashInString)
 	blockSize := 5
 	slices := hashLen / blockSize
@@ -169,6 +195,13 @@ func getFilePath(parentDir string, key ...string) string {
 		result = fmt.Sprintf("%s/%s", parentDir, key[0])
 	} else if len(key) == 2 {
 		result = fmt.Sprintf("%s/%s/%s ", parentDir, key[0], key[1])
+	} else if len(key) == 3 {
+		result = fmt.Sprintf("%s/%s/%s/%s ", parentDir, key[0], key[1], key[2])
 	}
 	return result
+}
+
+func getSHAHash(key string) string {
+	hash := sha1.Sum([]byte(key))
+	return hex.EncodeToString(hash[:])
 }
