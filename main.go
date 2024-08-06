@@ -8,10 +8,12 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
+	"time"
 )
 
 const (
-	PORT         string = ":3000"
+	DEFAULT_PORT string = ":3000"
 	ROOT_STORAGE        = "_STORAGE_"
 	PERMISSION          = 0750
 )
@@ -35,12 +37,24 @@ func main() {
 	// if err := removeFolder(ROOT_STORAGE); err != nil {
 	// 	fmt.Printf("%s\n", err)
 	// }
-	// if err := runServer(); err != nil {
-	// 	fmt.Printf("%s\n", err)
-	// }
 	// if err := findFile("/54553/"+path, fileName); err != nil {
 	// 	fmt.Println(err)
 	// }
+
+	var wg sync.WaitGroup
+	wg.Add(2) // Add a counter for the goroutine
+
+	go func() {
+		defer wg.Done()
+		runServer(":3000", "")
+	}()
+	time.Sleep(1 * time.Second)
+	go func() {
+		defer wg.Done()
+		runServer(":4000", ":3000")
+	}()
+
+	wg.Wait()
 }
 
 func createFolder(path string) error {
@@ -98,7 +112,7 @@ func findFile(path string, fileName string) error {
 	return nil
 }
 
-func runServer() error {
+func runServer(PORT string, p2 string) {
 	connectionPool := new(map[string]net.Conn)
 	*connectionPool = make(map[string]net.Conn)
 	connectionPoolStatus := make(chan string)
@@ -111,6 +125,15 @@ func runServer() error {
 	defer ln.Close()
 
 	fmt.Printf("[Server@%s]: Server started...\n", PORT[1:])
+	if p2 != "" {
+		go func() {
+			conn, err := net.Dial("tcp", p2)
+			if err != nil {
+				fmt.Println(err)
+			}
+			fmt.Printf("[Server@%s]: Connected with %s\n", PORT[1:], conn.RemoteAddr().String())
+		}()
+	}
 
 	for {
 		incomingConnection, err := ln.Accept()
@@ -121,19 +144,20 @@ func runServer() error {
 			continue
 		}
 
-		fmt.Printf("[Server@%s]: New peer connected %s\n", PORT[1:], connectionAddress)
+		fmt.Printf("[Server@%s]: New peer:%s connected \n", PORT[1:], connectionAddress)
 
-		fileKey := "KEYFORFILE"
-		path := connectionAddress[6:] + "/" + getContentAddress(fileKey)
-		fileName := getSHAHash(fileKey)
-		if err := createFolder(path); err != nil {
-			fmt.Printf("%s\n", err)
-		}
-		if err := createFile(path, fileName); err != nil {
-			fmt.Printf("%s\n", err)
-		}
+		// fileKey := "KEYFORFILE"
+		// path := connectionAddress[6:] + "/" + getContentAddress(fileKey)
+		// fileName := getSHAHash(fileKey)
+		// if err := createFolder(path); err != nil {
+		// 	fmt.Printf("%s\n", err)
+		// }
+		// if err := createFile(path, fileName); err != nil {
+		// 	fmt.Printf("%s\n", err)
+		// }
 
-		go handleConnection(incomingConnection, connectionPool, connectionPoolStatus)
+		time.Sleep(time.Second * 1)
+		go handleConnection(incomingConnection, PORT, connectionPool, connectionPoolStatus)
 		go func() {
 			for err := range connectionPoolStatus {
 				if err == "ZERO_PEERS" {
@@ -145,7 +169,7 @@ func runServer() error {
 	}
 }
 
-func handleConnection(conn net.Conn, connectionPool *map[string]net.Conn, connectionPoolStatus chan<- string) {
+func handleConnection(conn net.Conn, PORT string, connectionPool *map[string]net.Conn, connectionPoolStatus chan<- string) {
 	defer conn.Close()
 
 	buf := make([]byte, 1024)
