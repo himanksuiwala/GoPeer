@@ -8,7 +8,6 @@ import (
 	"net"
 	"os"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -19,42 +18,17 @@ const (
 )
 
 func main() {
-	// fileKey := "KEYFORFILE"
-	// path := getContentAddress(fileKey)
-	// fileName := getSHAHash(fileKey)
-	// if err := createFolder(path); err != nil {
-	// 	fmt.Printf("%s\n", err)
-	// }
-	// if err := createFile(path, fileName); err != nil {
-	// 	fmt.Printf("%s\n", err)
-	// }
-	// if err := readFile(path, "firstFileUsingGo.txt"); err != nil {
-	// 	fmt.Printf("%s\n", err)
-	// }
-	// if err := deleteFile(path, "firstFileUsingGo.txt"); err != nil {
-	// 	fmt.Printf("%s\n", err)
-	// }
-	// if err := removeFolder(ROOT_STORAGE); err != nil {
-	// 	fmt.Printf("%s\n", err)
-	// }
-	// if err := findFile("/54553/"+path, fileName); err != nil {
-	// 	fmt.Println(err)
-	// }
+	server := instantiatePeer(":3000")
+	server2 := instantiatePeer(":4000", ":3000")
+	server3 := instantiatePeer(":5000", ":4000")
 
-	var wg sync.WaitGroup
-	wg.Add(2) // Add a counter for the goroutine
+	server.start()
+	time.Sleep(time.Microsecond * 1000)
+	server2.start()
+	time.Sleep(time.Microsecond * 1000)
+	server3.start()
+	select {}
 
-	go func() {
-		defer wg.Done()
-		runServer(":3000", "")
-	}()
-	time.Sleep(1 * time.Second)
-	go func() {
-		defer wg.Done()
-		runServer(":4000", ":3000")
-	}()
-
-	wg.Wait()
 }
 
 func createFolder(path string) error {
