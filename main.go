@@ -20,13 +20,16 @@ const (
 func main() {
 	server := instantiatePeer(":3000")
 	server2 := instantiatePeer(":4000", ":3000")
-	server3 := instantiatePeer(":5000", ":4000")
+	server3 := instantiatePeer(":5000", ":4000", ":3000")
+	server4 := instantiatePeer(":6000", ":5000", ":4000", ":3000")
 
 	server.start()
 	time.Sleep(time.Microsecond * 1000)
 	server2.start()
 	time.Sleep(time.Microsecond * 1000)
 	server3.start()
+	time.Sleep(time.Microsecond * 1000)
+	server4.start()
 	select {}
 
 }

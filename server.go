@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 )
 
 type Server struct {
@@ -29,7 +30,8 @@ func (server *Server) start() {
 	}
 	go server.acceptConnections()
 
-	if len(server.peerNodes) == 1 {
+	if len(server.peerNodes) > 0 {
+		fmt.Println("[Server@"+server.listeningAddress[1:]+"]: Trying to connect with peers...", strings.Join(server.peerNodes, ", "))
 		go server.connectWithPeers(server.peerNodes)
 	}
 }
@@ -71,7 +73,7 @@ func (server *Server) handleConnections(conn net.Conn) {
 		}
 		if err != nil {
 			fmt.Printf("[Server@%s]: Nothing to readmore, closing the connection...\n", server.listeningAddress)
-			conn.Close().Error()
+			conn.Close()
 		}
 
 		msg := string(buf[:n])
@@ -83,7 +85,8 @@ func (server *Server) connectWithPeers(peerNodes []string) {
 	for _, peerNode := range peerNodes {
 		conn, err := net.Dial("tcp", peerNode)
 		if err != nil {
-			fmt.Println(err)
+			fmt.Printf("[Server@%s]: Unable to connect with Peer %s, peer is unavailable for connection.. \n", server.listeningAddress[1:], peerNode)
+			continue
 		}
 		fmt.Printf("[Server@%s]: Connected with Peer%s\n", server.listeningAddress[1:], conn.RemoteAddr().String()[9:])
 	}
