@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strings"
 )
 
@@ -19,12 +20,21 @@ func instantiatePeer(node string, nodes ...string) *Server {
 	return &Server{
 		listeningAddress: node,
 		peerNodes:        nodes,
-		storageLocation:  "/SOmeGibberish",
+		storageLocation:  getStorageParentDir(node),
 	}
 }
 
 func (server *Server) start() {
 	fmt.Printf("Spinning up the peer %s\n", server.listeningAddress)
+
+	msg, ifExists := server.validatePeerStorage()
+	if ifExists != true {
+		fmt.Printf("[Server@%s]: %s\n", server.listeningAddress[1:], msg)
+		fmt.Printf("[Server@%s]: Please check the path for storage and try again... still you'll be listening for peers\n", server.listeningAddress[1:])
+	} else {
+		fmt.Printf("[Server@%s]: Storage location validated\n", server.listeningAddress[1:])
+	}
+
 	if err := server.startListening(); err != nil {
 		fmt.Printf("%s\n", err)
 	}
@@ -90,5 +100,21 @@ func (server *Server) connectWithPeers(peerNodes []string) {
 		}
 		fmt.Printf("[Server@%s]: Connected with Peer%s\n", server.listeningAddress[1:], conn.RemoteAddr().String()[9:])
 	}
+}
 
+func (server *Server) validatePeerStorage() (string, bool) {
+	path := server.storageLocation
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return "Directory does not exist.", false
+	} else if err != nil {
+		return "Unknown error occured:", false
+	} else if !info.IsDir() {
+		return "Path exists, but it is not a directory.", false
+	}
+	return "Directory exists.", true
+}
+
+func getStorageParentDir(node string) string {
+	return fmt.Sprintf("_STORAGE_@%s", node[1:])
 }
