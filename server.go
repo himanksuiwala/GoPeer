@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 )
 
 type Server struct {
@@ -14,6 +15,7 @@ type Server struct {
 	peerNodes        []string
 	storageLocation  string
 	listener         net.Listener
+	connectionPool   map[string]net.Conn
 }
 
 func instantiatePeer(node string, nodes ...string) *Server {
@@ -21,6 +23,7 @@ func instantiatePeer(node string, nodes ...string) *Server {
 		listeningAddress: node,
 		peerNodes:        nodes,
 		storageLocation:  getStorageParentDir(node),
+		connectionPool:   make(map[string]net.Conn),
 	}
 }
 
@@ -40,10 +43,11 @@ func (server *Server) start() {
 	}
 	go server.acceptConnections()
 
-	if len(server.peerNodes) > 0 {
-		fmt.Println("[Server@"+server.listeningAddress[1:]+"]: Trying to connect with peers...", strings.Join(server.peerNodes, ", "))
-		go server.connectWithPeers(server.peerNodes)
-	}
+	fmt.Println("[Server@"+server.listeningAddress[1:]+"]: Trying to connect with peers, if any...", strings.Join(server.peerNodes, ", "))
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go server.connectWithPeers(server.peerNodes, &wg)
+	wg.Wait()
 }
 
 func (server *Server) startListening() error {
@@ -91,7 +95,7 @@ func (server *Server) handleConnections(conn net.Conn) {
 	}
 }
 
-func (server *Server) connectWithPeers(peerNodes []string) {
+func (server *Server) connectWithPeers(peerNodes []string, wg *sync.WaitGroup) {
 	for _, peerNode := range peerNodes {
 		conn, err := net.Dial("tcp", peerNode)
 		if err != nil {
@@ -99,7 +103,14 @@ func (server *Server) connectWithPeers(peerNodes []string) {
 			continue
 		}
 		fmt.Printf("[Server@%s]: Connected with Peer%s\n", server.listeningAddress[1:], conn.RemoteAddr().String()[9:])
+		server.connectionPool[peerNode] = conn
+		fmt.Printf("[Server@%s]: Connection Pool...", server.listeningAddress[1:])
+		for _, val := range server.connectionPool {
+			fmt.Printf("%s, ", val.RemoteAddr().String())
+		}
+		fmt.Println("")
 	}
+	wg.Done()
 }
 
 func (server *Server) validatePeerStorage() (string, bool) {
@@ -113,6 +124,17 @@ func (server *Server) validatePeerStorage() (string, bool) {
 		return "Path exists, but it is not a directory.", false
 	}
 	return "Directory exists.", true
+}
+
+func (server *Server) shareFile() {
+	for _, peerNode := range server.connectionPool {
+		message := []byte(server.listeningAddress[1:] + "->" + peerNode.RemoteAddr().String())
+		n, err := peerNode.Write(message)
+		if err != nil {
+			fmt.Printf("%s\n", err)
+		}
+		fmt.Printf("[Server@%s]: Writing %d bytes to connected peers...\n", server.listeningAddress[1:], n)
+	}
 }
 
 func getStorageParentDir(node string) string {
