@@ -21,24 +21,33 @@ func main() {
 	server := instantiatePeer(":3000")
 	server2 := instantiatePeer(":4000", ":3000")
 	server3 := instantiatePeer(":5000", ":4000", ":3000")
-	server4 := instantiatePeer(":6000", ":5000", ":4000", ":3000")
+	// server4 := instantiatePeer(":6000", ":5000", ":4000", ":3000")
+	// server5 := instantiatePeer(":7000", ":6000", ":5000", ":4000", ":3000")
 
 	server.start()
 	time.Sleep(time.Microsecond * 1000)
+	// server.getFile()
 	server2.start()
 	time.Sleep(time.Microsecond * 1000)
 	server3.start()
 	time.Sleep(time.Microsecond * 1000)
-	server4.start()
+	server3.shareFile()
+	// time.Sleep(time.Microsecond * 1000)
+	// server3.shareFile()
+	// server3.shareFile()
+	// time.Sleep(time.Microsecond * 1000)
+	// server4.start()
+	// server4.shareFile()
+	// time.Sleep(time.Microsecond * 1000)
+	// server5.start()
 	select {}
 
 }
 
 func createFolder(path string) error {
-	if err := os.MkdirAll(getFilePath(ROOT_STORAGE, path), PERMISSION); err != nil {
+	if err := os.MkdirAll(getFilePath(path), PERMISSION); err != nil {
 		return err
 	}
-	fmt.Printf("%s\n", "Folder created")
 	return nil
 }
 
@@ -46,15 +55,13 @@ func removeFolder(path string) error {
 	if err := os.RemoveAll(path); err != nil {
 		return err
 	}
-	fmt.Printf("%s\n", "Folder removed")
 	return nil
 }
 
-func createFile(path string, fileName string) error {
-	if err := os.WriteFile(getFilePath(ROOT_STORAGE, path, fileName), []byte("This is the first file system implemented from scratch"), PERMISSION); err != nil {
+func createFile(path string, fileName string, fileData []byte) error {
+	if err := os.WriteFile(getFilePath(path, fileName), []byte(fileData), PERMISSION); err != nil {
 		return err
 	}
-	fmt.Printf("%s\n", "File created")
 	return nil
 }
 
@@ -66,17 +73,16 @@ func deleteFile(path string, fileName string) error {
 	return nil
 }
 
-func readFile(path string, fileName string) error {
-	fileContents, err := os.ReadFile(getFilePath(ROOT_STORAGE, path, fileName))
+func readFile(path string, fileName string) ([]byte, error) {
+	file, err := os.ReadFile(getFilePath(path, fileName))
 	if err != nil {
-		return err
+		return nil, err
 	}
-	fmt.Printf("[File]:%s\n", string(fileContents))
-	return nil
+	return file, nil
 }
 
 func findFile(path string, fileName string) error {
-	_, err := os.Stat(getFilePath(ROOT_STORAGE, path, fileName))
+	_, err := os.Stat(getFilePath(path, fileName))
 	if err != nil {
 		if os.IsNotExist(err) {
 			fmt.Println("File does not exist")
@@ -152,7 +158,7 @@ func handleConnection(conn net.Conn, PORT string, connectionPool *map[string]net
 	buf := make([]byte, 1024)
 
 	for {
-		n, err := conn.Read(buf)
+		n, err := conn.Read(buf) //Reading when connected using telent
 		activeConnection := conn.RemoteAddr().String()
 		if err == io.EOF {
 			fmt.Printf("[Server@%s]: Peer[%s] disconnected\n", PORT[1:], conn.RemoteAddr().String())
@@ -192,7 +198,9 @@ func getContentAddress(key string) string {
 
 func getFilePath(parentDir string, key ...string) string {
 	result := ""
-	if len(key) == 1 {
+	if len(key) == 0 {
+		result = fmt.Sprintf("%s", parentDir)
+	} else if len(key) == 1 {
 		result = fmt.Sprintf("%s/%s", parentDir, key[0])
 	} else if len(key) == 2 {
 		result = fmt.Sprintf("%s/%s/%s ", parentDir, key[0], key[1])

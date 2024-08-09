@@ -38,7 +38,7 @@ func instantiatePeer(node string, nodes ...string) *Server {
 func (server *Server) start() {
 	fmt.Printf("Spinning up the peer %s\n", server.listeningAddress)
 
-	msg, ifExists := server.validatePeerStorage()
+	msg, ifExists := server.validateStorage()
 	if ifExists != true {
 		fmt.Printf("[Server@%s]: %s\n", server.listeningAddress[1:], msg)
 		fmt.Printf("[Server@%s]: Please check the path for storage and try again... still you'll be listening for peers\n", server.listeningAddress[1:])
@@ -104,13 +104,13 @@ func (server *Server) handleIncomingRequest(conn net.Conn) {
 			fmt.Printf("[Server@%s]: Nothing to readmore, closing the connection...\n", server.listeningAddress)
 			conn.Close()
 		}
-
+		fmt.Printf("[Peer@%s]: File incoming from: %s\n", server.listeningAddress, conn.LocalAddr().String())
 		file, err := server.writeToStorage(payload)
 		if err != nil {
 			fmt.Printf("%s\n", err)
 		}
 
-		fmt.Printf("[Peer@%s]: Succesfully written in storage: %s\n", conn.RemoteAddr().String()[5:], string(file))
+		fmt.Printf("[Peer@%s]: Succesfully written in storage: %s\n", server.listeningAddress, string(file))
 	}
 }
 
@@ -134,8 +134,19 @@ func (server *Server) writeToStorage(payload Payload) ([]byte, error) {
 	return file, nil
 }
 
-func (server *Server) readFromStorage() error {
-	return fmt.Errorf("err")
+func (server *Server) readFromStorage(payload Payload) ([]byte, error) {
+	msg, ok := server.validateStorage()
+	if !ok {
+		return nil, fmt.Errorf(msg)
+	}
+
+	fileStoragePath := fmt.Sprintf("%s/%s", server.storageLocation, getContentAddress(payload.Key))
+	file, err := readFile(fileStoragePath, payload.Key)
+	if err != nil {
+		return nil, err
+	}
+
+	return file, nil
 }
 
 func (server *Server) connectWithPeers(peerNodes []string, wg *sync.WaitGroup) {
@@ -156,7 +167,7 @@ func (server *Server) connectWithPeers(peerNodes []string, wg *sync.WaitGroup) {
 	wg.Done()
 }
 
-func (server *Server) validatePeerStorage() (string, bool) {
+func (server *Server) validateStorage() (string, bool) {
 	path := server.storageLocation
 	info, err := os.Stat(path)
 	if os.IsNotExist(err) {
@@ -186,9 +197,15 @@ func (server *Server) shareFile() {
 }
 
 func (server *Server) getFile() {
-	if err := server.readFromStorage(); err != nil {
-		fmt.Printf("[Server@%s]: File does not exists in locally..\n", server.listeningAddress[1:])
+	payload := Payload{Key: "ThisismyKEYs", Data: ""}
+
+	file, err := server.readFromStorage(payload)
+	if err != nil {
+		fmt.Printf("[Server@%s]: File does not exists locally..\n", server.listeningAddress[1:])
 	}
+
+	fmt.Printf("[Server@%s]: File found locally.. loading file...\n", server.listeningAddress[1:])
+	fmt.Printf("[Server@%s]: %s\n", server.listeningAddress[1:], string(file))
 
 	if err := server.getFilefromPeers(); err != nil {
 		fmt.Printf("%s\n", err)

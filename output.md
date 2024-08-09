@@ -76,3 +76,31 @@ Spinning up the peer :6000
 [Server@6000]: Connected with Peer:4000
 [Server@6000]: Connected with Peer:3000
 [Server@3000]: New peer.0.1:58041 connected
+----
+Spinning up the peer :3000
+[Server@3000]: Storage location validated
+[Server@3000]: Server is up & listening...
+[Server@3000]: Trying to connect with peers, if any...
+Spinning up the peer :4000
+[Server@4000]: Storage location validated
+[Server@4000]: Server is up & listening...
+[Server@4000]: Trying to connect with peers, if any... :3000
+[Server@4000]: Connected with Peer:3000
+[Server@4000]: Connection Pool...127.0.0.1:3000,
+[Server@3000]: New peer.0.1:63333 connected
+Spinning up the peer :5000
+[Server@5000]: Storage location validated
+[Server@5000]: Server is up & listening...
+[Server@5000]: Trying to connect with peers, if any... :4000, :3000
+[Server@4000]: New peer.0.1:63334 connected
+[Server@5000]: Connected with Peer:4000
+[Server@5000]: Connection Pool...127.0.0.1:4000,
+[Server@5000]: Connected with Peer:3000
+[Server@5000]: Connection Pool...127.0.0.1:4000, 127.0.0.1:3000,
+[Server@3000]: New peer.0.1:63335 connected
+[Server@5000]: Writing 32 bytes to connected peers...
+[Peer@:4000]: File incoming from: 127.0.0.1:4000
+[Peer@:3000]: File incoming from: 127.0.0.1:3000
+[Peer@:3000]: Succesfully written in storage: This data is sent over the network.
+[Peer@:4000]: Succesfully written in storage: This data is sent over the network.
+----
