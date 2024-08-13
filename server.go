@@ -1,5 +1,6 @@
 package main
 
+// NEED TO LINK THE COONECTION BETWEEN 2 PEERS for FILE TRANSFER
 import (
 	"encoding/gob"
 	"errors"
@@ -7,7 +8,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -19,11 +19,19 @@ type Server struct {
 	storageLocation  string
 	listener         net.Listener
 	connectionPool   map[string]net.Conn
+	cChannel         chan string
+	mu               sync.Mutex
+	wg               sync.WaitGroup
 }
 
 type Payload struct {
 	Key  string
 	Data string
+}
+
+type Message struct {
+	Control string
+	Payload Payload
 }
 
 func instantiatePeer(node string, nodes ...string) *Server {
@@ -32,27 +40,20 @@ func instantiatePeer(node string, nodes ...string) *Server {
 		peerNodes:        nodes,
 		storageLocation:  getStorageParentDir(node),
 		connectionPool:   make(map[string]net.Conn),
+		cChannel:         make(chan string),
 	}
 }
 
 func (server *Server) start() {
-	fmt.Printf("Spinning up the peer %s\n", server.listeningAddress)
-
-	msg, ifExists := server.validateStorage()
-	if ifExists != true {
-		fmt.Printf("[Server@%s]: %s\n", server.listeningAddress[1:], msg)
-		fmt.Printf("[Server@%s]: Please check the path for storage and try again... still you'll be listening for peers\n", server.listeningAddress[1:])
-	} else {
-		fmt.Printf("[Server@%s]: Storage location validated\n", server.listeningAddress[1:])
-	}
+	var wg sync.WaitGroup
 
 	if err := server.startListening(); err != nil {
-		fmt.Printf("%s\n", err)
+		log.Fatalf("Error while spinning up the server! %s\n", err)
 	}
+
 	go server.acceptIncomingConnections()
 
-	fmt.Println("[Server@"+server.listeningAddress[1:]+"]: Trying to connect with peers, if any...", strings.Join(server.peerNodes, ", "))
-	var wg sync.WaitGroup
+	fmt.Printf("[Server@%s]: Trying to connect with peers, if any...%s\n", server.listener.Addr().String(), strings.Join(server.peerNodes, ", "))
 	wg.Add(1)
 	go server.connectWithPeers(server.peerNodes, &wg)
 	wg.Wait()
@@ -60,12 +61,14 @@ func (server *Server) start() {
 
 func (server *Server) startListening() error {
 	var err error
+	fmt.Printf("Spinning up the peer %s\n", server.listeningAddress)
+
 	server.listener, err = net.Listen("tcp", server.listeningAddress)
 
 	if err != nil {
 		return err
 	}
-	fmt.Printf("[Server@%s]: Server is up & listening...\n", server.listeningAddress[1:])
+	fmt.Printf("[Server@%s]: Server is up & listening...\n", server.listener.Addr().String())
 	return nil
 }
 
@@ -73,45 +76,108 @@ func (server *Server) acceptIncomingConnections() {
 	for {
 		conn, err := server.listener.Accept()
 		if errors.Is(err, net.ErrClosed) {
-			return
+			break
 		}
 
 		if err != nil {
 			fmt.Printf("TCP accept error: %s\n", err)
 		}
-		fmt.Printf("[Server@%s]: New peer%s connected \n", server.listeningAddress[1:], conn.RemoteAddr().String()[5:])
+		fmt.Printf("[Server@%s]: New incoming peer %s connected \n", server.listener.Addr().String(), conn.RemoteAddr().String())
+
+		server.updateConnectionPool(conn)
+
 		go server.handleIncomingRequest(conn)
 	}
 }
 
 func (server *Server) handleIncomingRequest(conn net.Conn) {
-	defer conn.Close()
-	for {
-		var payload Payload
+	// defer func() {
+	// 	// conn.Close()
+	// 	server.mu.Lock()
+	// 	delete(server.connectionPool, conn.RemoteAddr().String())
+	// 	server.mu.Unlock()
+	// }()
 
-		dec := gob.NewDecoder(conn)
+	server.updateConnectionPool(conn)
 
-		err := dec.Decode(&payload)
-		if err != nil {
-			log.Println("Decode error:", err)
-			return
+	messageCh := make(chan Message)
+
+	// Goroutine for reading messages from peers
+	go func() {
+		for {
+			dec := gob.NewDecoder(conn)
+			var message Message
+			err := dec.Decode(&message)
+			if err != nil {
+				if err == io.EOF {
+					fmt.Printf("[Server@%s]: Peer:%s disconnected\n", server.listener.Addr().String(), conn.RemoteAddr().String())
+				} else {
+					fmt.Println("Decode error:", err)
+				}
+				close(messageCh)
+				return
+			}
+
+			if message.Control == "WRITE" {
+
+				fmt.Printf("[Peer@%s]: Incoming file WRITE request from: %s\n", server.listener.Addr().String(), conn.RemoteAddr().String())
+				file, err := server.writeToStorage(message.Payload)
+				if err != nil {
+					fmt.Printf("%s\n", err)
+				}
+				fmt.Printf("[Peer@%s]: Successfully written in storage: %s\n", server.listener.Addr().String(), string(file))
+
+			} else if message.Control == "READ" {
+
+				payload := message.Payload
+				fmt.Printf("[Peer@%s]: Incoming file READ request from: %s for key: '%s'\n", server.listener.Addr().String(), conn.RemoteAddr().String(), payload.Key)
+
+				fileStoragePath := fmt.Sprintf("%s/%s", server.storageLocation, getContentAddress(payload.Key))
+
+				if doesFileExists(fileStoragePath, payload.Key) {
+
+					file, err := server.readFromStorage(payload)
+					if err != nil {
+						fmt.Printf("Error while reading the file: %s\n ", err)
+					}
+					fmt.Printf("[Server@%s]: File found remotely.. serving file...\n", server.listener.Addr().String())
+					fmt.Printf("[Server@%s]: %s\n", server.listener.Addr().String(), string(file))
+
+					sentBackPayload := Payload{Key: payload.Key, Data: string(file)}
+					message := Message{Control: "WRITE", Payload: sentBackPayload}
+					messageCh <- message
+
+				} else {
+
+					fmt.Printf("[Server@%s]: File does not exists remotely\n", server.listener.Addr().String())
+
+				}
+				close(messageCh)
+			}
 		}
+	}()
 
-		if err == io.EOF {
-			fmt.Printf("[Server@%s]: Peer:%s disconnected\n", server.listeningAddress, conn.RemoteAddr().String()[5:])
-			break
-		} else if err != nil {
-			fmt.Printf("[Server@%s]: Nothing to readmore, closing the connection...\n", server.listeningAddress)
-			conn.Close()
-		}
-		fmt.Printf("[Peer@%s]: File incoming from: %s\n", server.listeningAddress, conn.LocalAddr().String())
-		file, err := server.writeToStorage(payload)
-		if err != nil {
-			fmt.Printf("%s\n", err)
-		}
+	// Goroutine for writing messages to peers
+	go func() {
+		for message := range messageCh {
+			peerNode, err := server.getConnectionFromConnPool(conn)
+			if err != nil {
+				fmt.Printf("Peer do not exists..\n")
+			}
 
-		fmt.Printf("[Peer@%s]: Succesfully written in storage: %s\n", server.listeningAddress, string(file))
-	}
+			enc := gob.NewEncoder(peerNode)
+			if err := enc.Encode(message); err != nil {
+				fmt.Printf("Error sending message to peer: %s\n", err)
+				server.mu.Lock()
+				delete(server.connectionPool, peerNode.RemoteAddr().String())
+				server.mu.Unlock()
+
+			}
+			fmt.Println("message shared -> ", message, peerNode.RemoteAddr().String())
+		}
+	}()
+
+	select {}
 }
 
 func (server *Server) writeToStorage(payload Payload) ([]byte, error) {
@@ -153,76 +219,120 @@ func (server *Server) connectWithPeers(peerNodes []string, wg *sync.WaitGroup) {
 	for _, peerNode := range peerNodes {
 		conn, err := net.Dial("tcp", peerNode)
 		if err != nil {
-			fmt.Printf("[Server@%s]: Unable to connect with Peer %s, peer is unavailable for connection.. \n", server.listeningAddress[1:], peerNode)
+			fmt.Printf("[Server@%s]: Unable to connect with Peer %s, peer is unavailable for connection.. \n", server.listener.Addr().String(), peerNode)
 			continue
 		}
-		fmt.Printf("[Server@%s]: Connected with Peer%s\n", server.listeningAddress[1:], conn.RemoteAddr().String()[9:])
-		server.connectionPool[peerNode] = conn
-		fmt.Printf("[Server@%s]: Connection Pool...", server.listeningAddress[1:])
-		for _, val := range server.connectionPool {
-			fmt.Printf("%s, ", val.RemoteAddr().String())
-		}
-		fmt.Println("")
+		fmt.Printf("[Server@%s]: Connection successfully established with  %s\n", server.listener.Addr().String(), conn.RemoteAddr().String())
+		server.updateConnectionPool(conn)
+		/*
+			Required to handle incoming request from other connected peers once the connection is established - handleIncomingRequest.
+			Need to find another way
+		*/
+		go server.handleIncomingRequest(conn)
+		break
 	}
 	wg.Done()
 }
 
-func (server *Server) validateStorage() (string, bool) {
-	path := server.storageLocation
-	info, err := os.Stat(path)
-	if os.IsNotExist(err) {
-		return "Directory does not exist.", false
-	} else if err != nil {
-		return "Unknown error occured:", false
-	} else if !info.IsDir() {
-		return "Path exists, but it is not a directory.", false
-	}
-	return "Directory exists.", true
-}
-
-func (server *Server) shareFile() {
-	payload := Payload{Key: "ThisismyKEY", Data: "This data is sent over the network."}
+func (server *Server) storeFile(payload Payload) {
 	payloadSize := reflect.TypeOf(payload).Size()
 
-	fmt.Printf("[Server@%s]: Writing %d bytes to connected peers...\n", server.listeningAddress[1:], payloadSize)
+	if len(server.connectionPool) == 0 {
 
-	for _, peerNode := range server.connectionPool {
-		enc := gob.NewEncoder(peerNode)
-
-		if err := enc.Encode(payload); err != nil {
+		_, err := server.writeToStorage(payload)
+		if err != nil {
 			fmt.Printf("%s\n", err)
+		}
+		fmt.Printf("[Server@%s]: Writing %d bytes to locally...\n", server.listener.Addr().String(), payloadSize)
+
+	} else {
+
+		fmt.Printf("[Server@%s]: Writing %d bytes to connected peers...\n", server.listener.Addr().String(), payloadSize)
+
+		var wg sync.WaitGroup
+		stop := false
+		message := Message{Control: "WRITE", Payload: payload}
+		for _, peerNode := range server.connectionPool {
+			if stop {
+				break
+			}
+
+			wg.Add(1)
+			go func(peerNode net.Conn) {
+				defer wg.Done()
+				enc := gob.NewEncoder(peerNode)
+				if err := enc.Encode(message); err != nil {
+					fmt.Printf("Error while sharing the file: %s\n", err)
+					stop = true
+				}
+			}(peerNode)
+		}
+
+	}
+}
+
+func (server *Server) getFile(payload Payload) {
+	fmt.Printf("[Server@%s]: Requesting file with key: %s\n", server.listener.Addr().String(), payload.Key)
+	fileStoragePath := fmt.Sprintf("%s/%s", server.storageLocation, getContentAddress(payload.Key))
+
+	if len(server.connectionPool) == 0 {
+
+		if doesFileExists(fileStoragePath, payload.Key) {
+
+			file, err := server.readFromStorage(payload)
+			if err != nil {
+				fmt.Printf("Error while reading the file: %s\n ", err)
+			}
+			fmt.Printf("[Server@%s]: File found locally.. loading file...\n", server.listener.Addr().String())
+			fmt.Printf("[Server@%s]: %s\n", server.listener.Addr().String(), string(file))
+
+		}
+		fmt.Printf("[Server@%s]: File does not exists locally..\n", server.listener.Addr().String())
+
+	} else {
+
+		fmt.Printf("[Server@%s]: File does not exists locally..\n", server.listener.Addr().String())
+		if err := server.requestFilefromPeers(payload); err != nil {
+			fmt.Printf("Error while requesting the file: %s\n", err)
+		}
+		fmt.Printf("[Server@%s]: File requested from Peers...\n", server.listener.Addr().String())
+
+	}
+}
+
+func (server *Server) requestFilefromPeers(payload Payload) error {
+	message := Message{Control: "READ", Payload: payload}
+	for _, peer := range server.connectionPool {
+		enc := gob.NewEncoder(peer)
+		if err := enc.Encode(message); err != nil {
+			fmt.Printf("Error while transmitting the request: %s\n", err)
 			continue
 		}
 	}
-}
-
-func (server *Server) getFile() {
-	payload := Payload{Key: "ThisismyKEYs", Data: ""}
-
-	file, err := server.readFromStorage(payload)
-	if err != nil {
-		fmt.Printf("[Server@%s]: File does not exists locally..\n", server.listeningAddress[1:])
-	}
-
-	fmt.Printf("[Server@%s]: File found locally.. loading file...\n", server.listeningAddress[1:])
-	fmt.Printf("[Server@%s]: %s\n", server.listeningAddress[1:], string(file))
-
-	if err := server.getFilefromPeers(); err != nil {
-		fmt.Printf("%s\n", err)
-	}
-}
-
-func (server *Server) getFilefromPeers() error {
-	for _, peer := range server.connectionPool {
-		//Do something to get files from peer
-		fmt.Println(peer)
-	}
 	return nil
 }
+
 func (server *Server) sendFiletoPeer() error {
 	return nil
 }
 
-func getStorageParentDir(node string) string {
-	return fmt.Sprintf("_STORAGE_@%s", node[1:])
+func (server *Server) updateConnectionPool(conn net.Conn) {
+	server.mu.Lock()
+	server.connectionPool[conn.RemoteAddr().String()] = conn
+	server.mu.Unlock()
+}
+
+func (server *Server) getConnectionFromConnPool(conn net.Conn) (net.Conn, error) {
+	server.mu.Lock()
+	existingNode, isPresent := server.connectionPool[conn.RemoteAddr().String()]
+	server.mu.Unlock()
+	if isPresent == false {
+		return nil, fmt.Errorf("Peer does not exists in connection pool..")
+	}
+	return existingNode, nil
+}
+
+func init() {
+	gob.Register(Payload{})
+	gob.Register(Message{})
 }
