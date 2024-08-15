@@ -122,34 +122,10 @@ func (server *Server) handleIncomingRequest(conn net.Conn) {
 			switch payload := message.Payload.(type) {
 
 			case W_Payload:
-				fmt.Printf("[Peer@%s]: Incoming file WRITE request from: %s\n", server.listener.Addr().String(), conn.RemoteAddr().String())
-
-				file, err := server.writeToStorage(payload)
-				if err != nil {
-					fmt.Printf("%s\n", err)
-				}
-				fmt.Printf("[Peer@%s]: Successfully written in storage: %s\n", server.listener.Addr().String(), string(file))
+				server.handleWriteFile(conn, payload)
 
 			case R_Payload:
-				fmt.Printf("[Peer@%s]: Incoming file READ request from: %s for key: '%s'\n", server.listener.Addr().String(), conn.RemoteAddr().String(), payload.Key)
-
-				fileStoragePath := fmt.Sprintf("%s/%s", server.storageLocation, getContentAddress(payload.Key))
-
-				if doesFileExists(fileStoragePath, payload.Key) {
-					file, err := server.readFromStorage(payload)
-					if err != nil {
-						fmt.Printf("Error while reading the file: %s\n ", err)
-					}
-					fmt.Printf("[Server@%s]: File found remotely.. serving file...\n", server.listener.Addr().String())
-					fmt.Printf("[Server@%s]: %s\n", server.listener.Addr().String(), string(file))
-
-					response := W_Payload{Key: payload.Key, Data: string(file)}
-					message := Message{Payload: response}
-					messageStatus <- message
-
-				} else {
-					fmt.Printf("[Server@%s]: File does not exists remotely\n", server.listener.Addr().String())
-				}
+				server.handleReadFile(conn, payload, messageStatus)
 			}
 		}
 	}()
@@ -177,6 +153,38 @@ func (server *Server) handleIncomingRequest(conn net.Conn) {
 	}()
 
 	select {}
+}
+
+func (server *Server) handleWriteFile(conn net.Conn, payload W_Payload) {
+	fmt.Printf("[Peer@%s]: Incoming file WRITE request from: %s\n", server.listener.Addr().String(), conn.RemoteAddr().String())
+
+	file, err := server.writeToStorage(payload)
+	if err != nil {
+		fmt.Printf("%s\n", err)
+	}
+	fmt.Printf("[Peer@%s]: Successfully written in local storage:\n", server.listener.Addr().String())
+	fmt.Printf("[File@%s]: %s\n", server.listener.Addr().String(), string(file))
+}
+
+func (server *Server) handleReadFile(conn net.Conn, payload R_Payload, messageStatus chan<- Message) {
+	fmt.Printf("[Peer@%s]: Incoming file READ request from: %s for key: '%s'\n", server.listener.Addr().String(), conn.RemoteAddr().String(), payload.Key)
+
+	fileStoragePath := fmt.Sprintf("%s/%s", server.storageLocation, getContentAddress(payload.Key))
+
+	if doesFileExists(fileStoragePath, payload.Key) {
+		file, err := server.readFromStorage(payload)
+		if err != nil {
+			fmt.Printf("Error while reading the file: %s\n ", err)
+		}
+		fmt.Printf("[Server@%s]: File found remotely.. serving file...\n", server.listener.Addr().String())
+		fmt.Printf("[File@%s]: %s\n", server.listener.Addr().String(), string(file))
+
+		message := Message{Payload: W_Payload{Key: payload.Key, Data: string(file)}}
+		messageStatus <- message
+
+	} else {
+		fmt.Printf("[Server@%s]: File does not exists remotely\n", server.listener.Addr().String())
+	}
 }
 
 func (server *Server) writeToStorage(payload W_Payload) ([]byte, error) {
