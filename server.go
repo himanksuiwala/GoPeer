@@ -21,7 +21,6 @@ type Server struct {
 	connectionPool   map[string]net.Conn
 	cChannel         chan string
 	mu               sync.Mutex
-	wg               sync.WaitGroup
 }
 
 type Message struct {
@@ -109,14 +108,12 @@ func (server *Server) handleIncomingRequest(conn net.Conn) {
 
 	go func() {
 		for {
-			dec := gob.NewDecoder(conn)
 			var message Message
-			err := dec.Decode(&message)
-			if err != nil {
+			if err := server.decode(conn, &message); err != nil {
 				if err == io.EOF {
 					fmt.Printf("[Server@%s]: Peer:%s disconnected\n", server.listener.Addr().String(), conn.RemoteAddr().String())
 				} else {
-					fmt.Println("Decode error:", err)
+					fmt.Printf("[Server@%s]: Error while reading from peer..\n", server.listener.Addr().String())
 				}
 				close(messageStatus)
 				return
@@ -166,13 +163,8 @@ func (server *Server) handleIncomingRequest(conn net.Conn) {
 					fmt.Printf("Peer do not exists..\n")
 				}
 
-				enc := gob.NewEncoder(peerNode)
-				if err := enc.Encode(message); err != nil {
-					fmt.Printf("Error sending message to peer: %s\n", err)
-					server.mu.Lock()
-					delete(server.connectionPool, peerNode.RemoteAddr().String())
-					server.mu.Unlock()
-
+				if err := server.encode(peerNode, &message); err != nil {
+					fmt.Printf("[Server@%s]: Error while sending the file back to peer..\n", server.listener.Addr().String())
 				}
 				close(messageShared)
 
@@ -279,9 +271,8 @@ func (server *Server) storeFile(payload W_Payload, shareWithPeers bool) {
 				wg.Add(1)
 				go func(peerNode net.Conn) {
 					defer wg.Done()
-					enc := gob.NewEncoder(peerNode)
-					if err := enc.Encode(message); err != nil {
-						fmt.Printf("Error while sharing the file: %s\n", err)
+					if err := server.encode(peerNode, &message); err != nil {
+						fmt.Printf("[Server@%s]: Error while sharing the file with peer..\n", server.listener.Addr().String())
 						stop = true
 					}
 				}(peerNode)
@@ -322,13 +313,20 @@ func (server *Server) getFile(payload R_Payload) {
 func (server *Server) requestFilefromPeers(payload R_Payload) error {
 	message := Message{Payload: payload}
 	for _, peer := range server.connectionPool {
-		enc := gob.NewEncoder(peer)
-		if err := enc.Encode(message); err != nil {
-			fmt.Printf("Error while transmitting the request: %s\n", err)
+		if err := server.encode(peer, &message); err != nil {
+			fmt.Printf("[Server@%s]: Error requesting the file from peer..\n", server.listener.Addr().String())
 			continue
 		}
 	}
 	return nil
+}
+
+func (server *Server) decode(r io.Reader, msg *Message) error {
+	return gob.NewDecoder(r).Decode(msg)
+}
+
+func (server *Server) encode(r io.Writer, msg *Message) error {
+	return gob.NewEncoder(r).Encode(msg)
 }
 
 func (server *Server) sendFiletoPeer() error {
