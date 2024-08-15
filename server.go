@@ -241,70 +241,82 @@ func (server *Server) connectWithPeers(peerNodes []string, wg *sync.WaitGroup) {
 	wg.Done()
 }
 
-func (server *Server) storeFile(payload W_Payload) {
+func (server *Server) storeFile(payload W_Payload, shareWithPeers bool) {
 	payloadSize := reflect.TypeOf(payload).Size()
+	fileStoragePath := fmt.Sprintf("%s/%s", server.storageLocation, getContentAddress(payload.Key))
 
-	if len(server.connectionPool) == 0 {
+	if doesFileExists(fileStoragePath, payload.Key) {
+		file, err := server.readFromStorage(R_Payload{Key: payload.Key})
+		if err != nil {
+			fmt.Printf("Error while reading the file: %s\n ", err)
+		}
+		fmt.Printf("[Server@%s]: File already exists.. loading file...\n", server.listener.Addr().String())
+		fmt.Printf("[File@%s]: %s\n", server.listener.Addr().String(), string(file))
 
+	} else {
 		_, err := server.writeToStorage(payload)
 		if err != nil {
 			fmt.Printf("%s\n", err)
 		}
-		fmt.Printf("[Server@%s]: Writing %d bytes to locally...\n", server.listener.Addr().String(), payloadSize)
+		fmt.Printf("[Server@%s]: Writing %d bytes locally...\n", server.listener.Addr().String(), payloadSize)
+	}
 
-	} else {
+	if shareWithPeers {
+		if len(server.connectionPool) == 0 {
+			fmt.Printf("[Server@%s]: No peer connected, can't share file\n", server.listener.Addr().String())
 
-		fmt.Printf("[Server@%s]: Writing %d bytes to connected peers...\n", server.listener.Addr().String(), payloadSize)
+		} else {
+			fmt.Printf("[Server@%s]: Sharing file (%d bytes) with connected peers...\n", server.listener.Addr().String(), payloadSize)
 
-		var wg sync.WaitGroup
-		stop := false
-		message := Message{Payload: payload}
-		for _, peerNode := range server.connectionPool {
-			if stop {
-				break
+			var wg sync.WaitGroup
+			stop := false
+			message := Message{Payload: payload}
+			for _, peerNode := range server.connectionPool {
+				if stop {
+					break
+				}
+
+				wg.Add(1)
+				go func(peerNode net.Conn) {
+					defer wg.Done()
+					enc := gob.NewEncoder(peerNode)
+					if err := enc.Encode(message); err != nil {
+						fmt.Printf("Error while sharing the file: %s\n", err)
+						stop = true
+					}
+				}(peerNode)
 			}
 
-			wg.Add(1)
-			go func(peerNode net.Conn) {
-				defer wg.Done()
-				enc := gob.NewEncoder(peerNode)
-				if err := enc.Encode(message); err != nil {
-					fmt.Printf("Error while sharing the file: %s\n", err)
-					stop = true
-				}
-			}(peerNode)
 		}
-
 	}
+
 }
 
 func (server *Server) getFile(payload R_Payload) {
 	fmt.Printf("[Server@%s]: Requesting file with key: %s\n", server.listener.Addr().String(), payload.Key)
 	fileStoragePath := fmt.Sprintf("%s/%s", server.storageLocation, getContentAddress(payload.Key))
 
-	if len(server.connectionPool) == 0 {
-
-		if doesFileExists(fileStoragePath, payload.Key) {
-
-			file, err := server.readFromStorage(payload)
-			if err != nil {
-				fmt.Printf("Error while reading the file: %s\n ", err)
-			}
-			fmt.Printf("[Server@%s]: File found locally.. loading file...\n", server.listener.Addr().String())
-			fmt.Printf("[Server@%s]: %s\n", server.listener.Addr().String(), string(file))
-
+	if doesFileExists(fileStoragePath, payload.Key) {
+		file, err := server.readFromStorage(payload)
+		if err != nil {
+			fmt.Printf("Error while reading the file: %s\n ", err)
 		}
-		fmt.Printf("[Server@%s]: File does not exists locally..\n", server.listener.Addr().String())
+		fmt.Printf("[Server@%s]: File found locally.. loading file...\n", server.listener.Addr().String())
+		fmt.Printf("[File@%s]: %s\n", server.listener.Addr().String(), string(file))
 
 	} else {
-
 		fmt.Printf("[Server@%s]: File does not exists locally..\n", server.listener.Addr().String())
-		if err := server.requestFilefromPeers(payload); err != nil {
-			fmt.Printf("Error while requesting the file: %s\n", err)
+		if len(server.connectionPool) == 0 {
+			fmt.Printf("[Server@%s]: No peer connected, can't search for file\n", server.listener.Addr().String())
+		} else {
+			if err := server.requestFilefromPeers(payload); err != nil {
+				fmt.Printf("Error while requesting the file: %s\n", err)
+			}
+			fmt.Printf("[Server@%s]: File requested from Peers...\n", server.listener.Addr().String())
 		}
-		fmt.Printf("[Server@%s]: File requested from Peers...\n", server.listener.Addr().String())
 
 	}
+
 }
 
 func (server *Server) requestFilefromPeers(payload R_Payload) error {
