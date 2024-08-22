@@ -1,6 +1,5 @@
 package main
 
-// NEED TO LINK THE COONECTION BETWEEN 2 PEERS for FILE TRANSFER
 import (
 	"encoding/gob"
 	"errors"
@@ -21,6 +20,7 @@ type Server struct {
 	connectionPool   map[string]net.Conn
 	cChannel         chan string
 	mu               sync.Mutex
+	wg               sync.WaitGroup
 }
 
 type Message struct {
@@ -29,6 +29,10 @@ type Message struct {
 
 type R_Payload struct {
 	Key string
+}
+
+type E_Payload struct {
+	EType string
 }
 
 type W_Payload struct {
@@ -103,7 +107,8 @@ func (server *Server) handleIncomingRequest(conn net.Conn) {
 	server.updateConnectionPool(conn)
 
 	messageStatus := make(chan Message)
-	messageShared := make(chan struct{})
+	messageOk := make(chan struct{})
+	messageError := make(chan struct{})
 	writingMessage := true
 
 	go func() {
@@ -126,6 +131,9 @@ func (server *Server) handleIncomingRequest(conn net.Conn) {
 
 			case R_Payload:
 				server.handleReadFile(conn, payload, messageStatus)
+
+			case E_Payload:
+				server.handleExecption(conn, payload)
 			}
 		}
 	}()
@@ -137,14 +145,29 @@ func (server *Server) handleIncomingRequest(conn net.Conn) {
 				peerNode, err := server.getConnectionFromConnPool(conn)
 				if err != nil {
 					fmt.Printf("Peer do not exists..\n")
+					close(messageError)
+					break
 				}
 
 				if err := server.encode(peerNode, &message); err != nil {
-					fmt.Printf("[Server@%s]: Error while sending the file back to peer..\n", server.listener.Addr().String())
+					fmt.Printf("[Server@%s]: Decoding error..\n", server.listener.Addr().String())
+					close(messageError)
+					break
 				}
-				close(messageShared)
 
-			case <-messageShared:
+				if _, ok := message.Payload.(E_Payload); ok {
+					// fmt.Printf("[Server@%s]: %v\n", server.listener.Addr().String(), (message.Payload.(E_Payload).EType))
+					close(messageError)
+					break
+				}
+
+				close(messageOk)
+
+			case <-messageError:
+				writingMessage = false
+				break
+
+			case <-messageOk:
 				fmt.Printf("[Server@%s]: File served.. successfully...\n", server.listener.Addr().String())
 				writingMessage = false
 				break
@@ -176,17 +199,30 @@ func (server *Server) handleReadFile(conn net.Conn, payload R_Payload, messageSt
 		if err != nil {
 			fmt.Printf("Error while reading the file: %s\n ", err)
 		}
-		fmt.Printf("[Server@%s]: File found remotely.. serving file...\n", server.listener.Addr().String())
+		fmt.Printf("[Server@%s]: File found, serving file...\n", server.listener.Addr().String())
 		fmt.Printf("[File@%s]: %s\n", server.listener.Addr().String(), string(file))
 
 		message := Message{Payload: W_Payload{Key: payload.Key, Data: string(file)}}
 		messageStatus <- message
 
 	} else {
-		fmt.Printf("[Server@%s]: File does not exists remotely\n", server.listener.Addr().String())
+		message := Message{Payload: E_Payload{EType: "FILE NOT FOUND"}}
+		messageStatus <- message
+		fmt.Printf("[Server@%s]: File does not exists.\n", server.listener.Addr().String())
 	}
 }
 
+func (server *Server) handleExecption(conn net.Conn, payload E_Payload) {
+	switch payload.EType {
+
+	case "FILE NOT FOUND":
+		fmt.Printf("[Server@%s]: File not found remotely..\n", server.listener.Addr().String())
+
+	default:
+		fmt.Printf("[Server@%s]: Some unknown error occured while fetching the file remotely..\n", server.listener.Addr().String())
+	}
+
+}
 func (server *Server) writeToStorage(payload W_Payload) ([]byte, error) {
 	fileStoragePath := fmt.Sprintf("%s/%s", server.storageLocation, getContentAddress(payload.Key))
 
@@ -361,4 +397,5 @@ func init() {
 	gob.Register(Message{})
 	gob.Register(R_Payload{})
 	gob.Register(W_Payload{})
+	gob.Register(E_Payload{})
 }
